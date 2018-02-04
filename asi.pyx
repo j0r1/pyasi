@@ -151,6 +151,61 @@ cdef casi.ASI_CONTROL_TYPE getControlTypeFromString(s):
 
     raise ASIException("Internal error: unexpected control type '{}', no internal type can be associated".format(s))
 
+cdef _getCameraInfo(cameraId):
+    cdef casi.ASI_CAMERA_INFO info
+    cdef casi.ASI_ERROR_CODE err
+
+    err = casi.ASIGetCameraProperty(&info, cameraId)
+    if err != casi.ASI_SUCCESS:
+        raise ASIException("Unable to get camera info for ID {}, error is {}".format(cameraId, getASIErrorString(err)))
+
+    obj = { 
+        "Name": info.Name,
+        "MaxHeight": info.MaxHeight,
+        "MaxWidth": info.MaxWidth,
+        "IsColorCam": True if info.IsColorCam == casi.ASI_TRUE else False,
+        #"BayerPattern": below
+        #"SupportedBins": below
+        #"SupportedVideoFormat": below
+        "PixelSize": info.PixelSize,
+        "MechanicalShutter": info.MechanicalShutter,
+        "ST4Port": info.ST4Port,
+        "IsCoolerCam": info.IsCoolerCam,
+        "IsUSB3Host": info.IsUSB3Host,
+        "IsUSB3Camera": info.IsUSB3Camera,
+        "ElecPerADU": info.ElecPerADU
+    }
+
+    bayer = "Unknown"
+    if info.BayerPattern == casi.ASI_BAYER_RG:
+        bayer = "RG"
+    elif info.BayerPattern == casi.ASI_BAYER_BG:
+        bayer = "BG"
+    elif info.BayerPattern == casi.ASI_BAYER_GR:
+        bayer = "GR"
+    elif info.BayerPattern == casi.ASI_BAYER_GB:
+        bayer = "GB"
+
+    obj["BayerPattern"] = bayer
+
+    bins = []
+    for i in range(16):
+        if info.SupportedBins[i] == 0:
+            break
+        bins.append(info.SupportedBins[i])
+
+    obj["SupportedBins"] = bins
+
+    fmts = []
+    for i in range(8):
+        if info.SupportedVideoFormat[i] == casi.ASI_IMG_END:
+            break
+        fmts.append(getImageFormatString(info.SupportedVideoFormat[i]))
+
+    obj["SupportedVideoFormat"] = fmts
+
+    return obj
+
 cdef class Camera:
 
     cdef int m_cameraId
@@ -211,59 +266,11 @@ cdef class Camera:
         self.m_controls = controls
 
     def _checkInfo(self):
-        cdef casi.ASI_CAMERA_INFO info
-        cdef casi.ASI_ERROR_CODE err
 
-        err = casi.ASIGetCameraProperty(&info, self.m_cameraId)
-        if err != casi.ASI_SUCCESS:
-            raise ASIException("Unable to get camera info for ID {}, error is {}".format(self.m_cameraId, getASIErrorString(err)))
+        if self.m_info is not None:
+            return
 
-        obj = { 
-            "Name": info.Name,
-            "MaxHeight": info.MaxHeight,
-            "MaxWidth": info.MaxWidth,
-            "IsColorCam": True if info.IsColorCam == casi.ASI_TRUE else False,
-            #"BayerPattern": below
-            #"SupportedBins": below
-            #"SupportedVideoFormat": below
-            "PixelSize": info.PixelSize,
-            "MechanicalShutter": info.MechanicalShutter,
-            "ST4Port": info.ST4Port,
-            "IsCoolerCam": info.IsCoolerCam,
-            "IsUSB3Host": info.IsUSB3Host,
-            "IsUSB3Camera": info.IsUSB3Camera,
-            "ElecPerADU": info.ElecPerADU
-        }
-
-        bayer = "Unknown"
-        if info.BayerPattern == casi.ASI_BAYER_RG:
-            bayer = "RG"
-        elif info.BayerPattern == casi.ASI_BAYER_BG:
-            bayer = "BG"
-        elif info.BayerPattern == casi.ASI_BAYER_GR:
-            bayer = "GR"
-        elif info.BayerPattern == casi.ASI_BAYER_GB:
-            bayer = "GB"
-
-        obj["BayerPattern"] = bayer
-
-        bins = []
-        for i in range(16):
-            if info.SupportedBins[i] == 0:
-                break
-            bins.append(info.SupportedBins[i])
-
-        obj["SupportedBins"] = bins
-
-        fmts = []
-        for i in range(8):
-            if info.SupportedVideoFormat[i] == casi.ASI_IMG_END:
-                break
-            fmts.append(getImageFormatString(info.SupportedVideoFormat[i]))
-
-        obj["SupportedVideoFormat"] = fmts
-
-        self.m_info = obj
+        self.m_info = _getCameraInfo(self.m_cameraId)
 
     def getInfo(self):
         self._checkInfo()
@@ -567,4 +574,15 @@ cdef class Camera:
                 return (frames, binning, getImageFormatString(imgType))
         finally:
             casi.ASIStopVideoCapture(self.m_cameraId)
+
+
+def getConnectedCameras():
+    cdef int nDev, i
+    nDev = casi.ASIGetNumOfConnectedCameras()
+
+    cameras = { }
+    for i in range(nDev):
+        cameras[i] = _getCameraInfo(i)
+
+    return cameras
 
