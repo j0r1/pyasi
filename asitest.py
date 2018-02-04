@@ -59,8 +59,8 @@ scipy.misc.imsave("rgbgrab_summedvideoframes.png", frame)
 # To simply record a number of frames for a number of seconds, you
 # can set the number of frames to something large, and limit the number
 # of seconds
-print("Recording frames for 5 seconds")
-frames, binning, imgType = cam.recordVideoFrames(10000, 99999, maxRecordTime = 5)
+print("Recording frames for 0.5 seconds")
+frames, binning, imgType = cam.recordVideoFrames(10000, 99999, maxRecordTime = 0.5)
 print("{} frames recorded".format(len(frames)))
 
 # There are several controls that can be changed or read. This lists all of
