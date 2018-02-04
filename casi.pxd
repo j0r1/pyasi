@@ -114,5 +114,9 @@ cdef extern from "ASICamera2.h":
     ASI_ERROR_CODE ASIGetExpStatus(int iCameraID, ASI_EXPOSURE_STATUS *pExpStatus)
     ASI_ERROR_CODE ASIGetDataAfterExp(int iCameraID, unsigned char* pBuffer, long lBuffSize)
 
+    ASI_ERROR_CODE ASIStartVideoCapture(int iCameraID)
+    ASI_ERROR_CODE ASIStopVideoCapture(int iCameraID)
+    ASI_ERROR_CODE ASIGetVideoData(int iCameraID, unsigned char* pBuffer, long lBuffSize, int iWaitms)
+
 
 

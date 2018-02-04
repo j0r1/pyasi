@@ -325,7 +325,21 @@ cdef class Camera:
         }
         return obj
 
-    def grab(self, int exposureTimeMicroSeconds):
+    def grab(self, int singleExposureTimeMicroSeconds, int repetitions = 1):
+
+        returnFrame = None
+        binning = None
+        imgTypeStr = None
+        for i in range(repetitions):
+            f, binning, imgTypeStr = self._grabSingle(singleExposureTimeMicroSeconds)
+            if returnFrame is None:
+                returnFrame = f
+            else:
+                returnFrame += f
+
+        return (returnFrame, binning, imgTypeStr)
+
+    def _grabSingle(self, int exposureTimeMicroSeconds):
         cdef int width, height, binning, bytesPerPixel
         cdef casi.ASI_IMG_TYPE imgType
         cdef casi.ASI_ERROR_CODE err
@@ -382,6 +396,7 @@ cdef class Camera:
             elif bytesPerPixel == 3:
                 npBuffer = np.frombuffer(bufBytes, np.uint8)
                 npBuffer = npBuffer.reshape((height, width, 3)).astype(np.double)
+                self._swapRGB(npBuffer)
             else:
                 raise ASIException("Internal error: unexpected number of bytes per pixel ({})".format(bytesPerPixel))
             
@@ -462,4 +477,94 @@ cdef class Camera:
             raise ASIException("Unable to set control value, error is {}".format(getASIErrorString(err)))
 
         return self.getControlValue(controlTypeString)
+
+    @staticmethod
+    def _swapRGB(f):
+        tmp = f.copy()
+        f[:,:,0] = tmp[:,:,2]
+        f[:,:,2] = tmp[:,:,0]
+
+    def recordVideoFrames(self, int exposureTimeMicroSeconds, maxFrames = 25, maxRecordTime = None, sumFrames = False):
+        cdef int width, height, binning, bytesPerPixel, waitMs
+        cdef casi.ASI_IMG_TYPE imgType
+        cdef casi.ASI_ERROR_CODE err
+        cdef casi.ASI_EXPOSURE_STATUS expStatus
+        cdef vector[unsigned char] buf
+
+        err = casi.ASIGetROIFormat(self.m_cameraId, &width, &height, &binning, &imgType)
+        if err != casi.ASI_SUCCESS:
+            raise ASIException("Unable to get capture frame information, error is {}".format(getASIErrorString(err)))
+
+        if imgType == casi.ASI_IMG_RAW8 or imgType == casi.ASI_IMG_Y8:
+            bytesPerPixel = 1
+        elif imgType == casi.ASI_IMG_RAW16:
+            bytesPerPixel = 2
+        elif imgType == casi.ASI_IMG_RGB24:
+            bytesPerPixel = 3
+        else:
+            raise ASIException("Unhandled image type {}".format(getImageFormatString(imgType)))
+
+        err = casi.ASISetControlValue(self.m_cameraId, casi.ASI_EXPOSURE, <long>exposureTimeMicroSeconds, casi.ASI_FALSE)
+        if err != casi.ASI_SUCCESS:
+            raise ASIException("Unable to set exposure time, error is {}".format(getASIErrorString(err)))
+
+        err = casi.ASIStartVideoCapture(self.m_cameraId)
+        if err != casi.ASI_SUCCESS:
+            raise ASIException("Unable to start video capture, error is {}".format(getASIErrorString(err)))
+        
+        # TODO: this will not be correct if there are clock jumps
+        startTime = time.time()
+
+        frames = [ ]
+        summedFrame = None
+        count = 0
+        try:
+            buf.resize(width*height*bytesPerPixel)
+            waitMs = (exposureTimeMicroSeconds/1000)*2 + 500
+
+            while True:
+                if maxRecordTime is not None and time.time()-startTime >= maxRecordTime:
+                    break
+
+                err = casi.ASIGetVideoData(self.m_cameraId, &buf[0], buf.size(), waitMs)
+                if err != casi.ASI_SUCCESS:
+                    raise ASIException("Unable to get video frame data, error is {}".format(getASIErrorString(err)))
+
+                bufBytes = <bytes>(&buf[0])[:buf.size()]
+
+                if bytesPerPixel == 1:
+                    npBuffer = np.frombuffer(bufBytes, np.uint8)
+                    npBuffer = npBuffer.reshape((height, width)).astype(np.double)
+                elif bytesPerPixel == 2:
+                    npBuffer = np.frombuffer(bufBytes, np.uint16)
+                    npBuffer = npBuffer.reshape((height, width)).astype(np.double)
+                elif bytesPerPixel == 3:
+                    npBuffer = np.frombuffer(bufBytes, np.uint8)
+                    npBuffer = npBuffer.reshape((height, width, 3)).astype(np.double)
+                else:
+                    raise ASIException("Internal error: unexpected number of bytes per pixel ({})".format(bytesPerPixel))
+
+                if sumFrames:
+                    if summedFrame is None:
+                        summedFrame = npBuffer
+                    else:
+                        summedFrame += npBuffer
+                else:
+                    frames.append(npBuffer)
+
+                count += 1
+                if count >= maxFrames:
+                    break
+
+            if sumFrames:
+                if bytesPerPixel == 3:
+                    self._swapRGB(summedFrame)
+                return (summedFrame, binning, getImageFormatString(imgType))
+            else:
+                if bytesPerPixel == 3:
+                    for f in frames:
+                        self._swapRGB(f)
+                return (frames, binning, getImageFormatString(imgType))
+        finally:
+            casi.ASIStopVideoCapture(self.m_cameraId)
 
